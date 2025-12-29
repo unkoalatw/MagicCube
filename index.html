@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D 魔術方塊 - 直覺拖拽版 (修正方向)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #020617; font-family: system-ui, sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; touch-action: none; outline: none; }
+        .ui-panel { pointer-events: none; position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; padding: 2rem; }
+        .ui-panel * { pointer-events: auto; }
+        .glass-card { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 1.5rem; }
+        .btn { transition: all 0.2s; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: #7dd3fc; padding: 0.75rem 1.5rem; border-radius: 1rem; font-weight: 700; }
+        .btn:hover { background: rgba(56, 189, 248, 0.25); transform: translateY(-2px); border-color: #38bdf8; box-shadow: 0 0 15px rgba(56, 189, 248, 0.3); }
+        * { user-select: none; -webkit-tap-highlight-color: transparent; }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div class="ui-panel">
+        <div class="flex justify-between items-start">
+            <div class="space-y-1">
+                <h1 class="text-3xl font-black tracking-tighter text-white uppercase italic">Cube <span class="text-sky-500">Sense</span></h1>
+                <div class="bg-sky-500/10 border border-sky-500/20 px-3 py-1 rounded-full text-[10px] text-sky-400 font-bold uppercase tracking-widest inline-block">
+                    手感修正版 v3.1
+                </div>
+            </div>
+            <div class="text-right">
+                <div id="timer" class="text-4xl font-mono font-bold text-white tracking-tight">00:00.00</div>
+                <div id="status" class="text-xs text-slate-400 mt-1 font-medium">拖拽方塊層即可轉動</div>
+            </div>
+        </div>
+
+        <div class="flex justify-center mb-4">
+            <div class="glass-card p-4 flex gap-4 shadow-2xl">
+                <button id="scramble-btn" class="btn">隨機打亂</button>
+                <button id="reset-btn" class="bg-slate-800/80 border border-white/5 text-slate-400 px-6 py-3 rounded-xl font-bold hover:bg-slate-700 hover:text-white transition-colors">重置</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * 3D 魔術方塊 - 方向修正版
+         * 修正了滑動方向與轉動方向的映射
+         */
+        let scene, camera, renderer, raycaster, mouse = new THREE.Vector2();
+        let cubes = [];
+        let isRotating = false;
+        let isDragging = false;
+        let dragStartPoint = new THREE.Vector2();
+        let selectedData = null;
+        
+        // 視角控制
+        let lon = 45, lat = 30;
+        let phi = 0, theta = 0;
+        let target = new THREE.Vector3(0, 0, 0);
+
+        const COLORS = {
+            top: 0xffffff, bottom: 0xffd700, left: 0xff8c00,
+            right: 0xdc2626, front: 0x16a34a, back: 0x2563eb, inner: 0x111827
+        };
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x020617);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            raycaster = new THREE.Raycaster();
+
+            scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+            const sun = new THREE.DirectionalLight(0xffffff, 0.4);
+            sun.position.set(10, 20, 15);
+            scene.add(sun);
+
+            createCube();
+            updateCameraPosition();
+            animate();
+
+            const el = renderer.domElement;
+            el.addEventListener('pointerdown', onPointerDown);
+            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointerup', onPointerUp);
+            window.addEventListener('resize', onResize);
+        }
+
+        function createCube() {
+            cubes.forEach(c => scene.remove(c));
+            cubes = [];
+            const size = 0.96;
+            for (let x = -1; x <= 1; x++) {
+                for (let y = -1; y <= 1; y++) {
+                    for (let z = -1; z <= 1; z++) {
+                        const materials = [
+                            new THREE.MeshLambertMaterial({ color: x === 1 ? COLORS.right : COLORS.inner }),
+                            new THREE.MeshLambertMaterial({ color: x === -1 ? COLORS.left : COLORS.inner }),
+                            new THREE.MeshLambertMaterial({ color: y === 1 ? COLORS.top : COLORS.inner }),
+                            new THREE.MeshLambertMaterial({ color: y === -1 ? COLORS.bottom : COLORS.inner }),
+                            new THREE.MeshLambertMaterial({ color: z === 1 ? COLORS.front : COLORS.inner }),
+                            new THREE.MeshLambertMaterial({ color: z === -1 ? COLORS.back : COLORS.inner }),
+                        ];
+                        const geo = new THREE.BoxGeometry(size, size, size);
+                        const cube = new THREE.Mesh(geo, materials);
+                        cube.position.set(x, y, z);
+                        scene.add(cube);
+                        cubes.push(cube);
+                    }
+                }
+            }
+        }
+
+        function onPointerDown(event) {
+            if (isRotating) return;
+            isDragging = true;
+            dragStartPoint.set(event.clientX, event.clientY);
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(cubes);
+
+            if (intersects.length > 0) {
+                const hit = intersects[0];
+                const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
+                const worldNormal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+                
+                selectedData = {
+                    object: hit.object,
+                    normal: worldNormal,
+                    initialPos: hit.object.position.clone()
+                };
+            } else {
+                selectedData = null;
+            }
+        }
+
+        function onPointerMove(event) {
+            if (!isDragging) return;
+
+            const moveX = event.clientX - dragStartPoint.x;
+            const moveY = event.clientY - dragStartPoint.y;
+            const threshold = 10;
+
+            if (selectedData) {
+                if (Math.abs(moveX) > threshold || Math.abs(moveY) > threshold) {
+                    handleCubeDrag(moveX, moveY);
+                    isDragging = false; 
+                }
+            } else {
+                lon -= moveX * 0.25;
+                lat += moveY * 0.25;
+                lat = Math.max(-85, Math.min(85, lat));
+                dragStartPoint.set(event.clientX, event.clientY);
+                updateCameraPosition();
+            }
+        }
+
+        function onPointerUp() {
+            isDragging = false;
+        }
+
+        /**
+         * 修正後的拖拽映射邏輯
+         */
+        function handleCubeDrag(moveX, moveY) {
+            if (isRotating || !selectedData) return;
+
+            const n = selectedData.normal;
+            const pos = selectedData.initialPos;
+            let axis, layer, angle;
+
+            const isHorizontal = Math.abs(moveX) > Math.abs(moveY);
+
+            // 核心修正：將 -1 和 1 的方向翻轉，以匹配直覺
+            if (Math.abs(n.y) > 0.5) { // 頂/底面
+                axis = isHorizontal ? 'y' : 'x';
+                layer = isHorizontal ? Math.round(pos.y) : Math.round(pos.x);
+                // 向右拉 moveX > 0，向上拉 moveY < 0
+                angle = isHorizontal ? (moveX > 0 ? 1 : -1) : (moveY > 0 ? 1 : -1);
+            } else if (Math.abs(n.x) > 0.5) { // 左/右面
+                axis = isHorizontal ? 'z' : 'y';
+                layer = isHorizontal ? Math.round(pos.z) : Math.round(pos.y);
+                angle = isHorizontal ? (moveX > 0 ? -1 : 1) : (moveY > 0 ? -1 : 1);
+            } else if (Math.abs(n.z) > 0.5) { // 前/後面
+                axis = isHorizontal ? 'y' : 'x';
+                layer = isHorizontal ? Math.round(pos.y) : Math.round(pos.x);
+                angle = isHorizontal ? (moveX > 0 ? 1 : -1) : (moveY > 0 ? 1 : -1);
+            }
+
+            if (axis) rotateLayer(axis, layer, angle * Math.PI / 2);
+        }
+
+        async function rotateLayer(axis, layer, angle) {
+            if (isRotating) return;
+            isRotating = true;
+            if (!timerRunning) startTimer();
+
+            const pivot = new THREE.Group();
+            scene.add(pivot);
+
+            const movingCubes = cubes.filter(c => {
+                const p = new THREE.Vector3();
+                c.getWorldPosition(p);
+                return Math.abs(p[axis] - layer) < 0.1;
+            });
+
+            movingCubes.forEach(c => pivot.attach(c));
+
+            const duration = 250;
+            const start = performance.now();
+
+            return new Promise(resolve => {
+                function step(now) {
+                    const progress = Math.min((now - start) / duration, 1);
+                    const t = progress * (2 - progress); 
+                    pivot.rotation[axis] = t * angle;
+                    if (progress < 1) requestAnimationFrame(step);
+                    else {
+                        pivot.updateMatrixWorld();
+                        movingCubes.forEach(c => scene.attach(c));
+                        scene.remove(pivot);
+                        isRotating = false;
+                        resolve();
+                    }
+                }
+                requestAnimationFrame(step);
+            });
+        }
+
+        function updateCameraPosition() {
+            phi = THREE.MathUtils.degToRad(90 - lat);
+            theta = THREE.MathUtils.degToRad(lon);
+            camera.position.x = 10 * Math.sin(phi) * Math.cos(theta);
+            camera.position.y = 10 * Math.cos(phi);
+            camera.position.z = 10 * Math.sin(phi) * Math.sin(theta);
+            camera.lookAt(target);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        let startTime, timerInterval, timerRunning = false;
+        function startTimer() {
+            if (timerRunning) return;
+            startTime = Date.now();
+            timerRunning = true;
+            timerInterval = setInterval(() => {
+                const d = Date.now() - startTime;
+                const m = Math.floor(d/60000).toString().padStart(2, '0');
+                const s = Math.floor((d%60000)/1000).toString().padStart(2, '0');
+                const ms = Math.floor((d%1000)/10).toString().padStart(2, '0');
+                document.getElementById('timer').innerText = `${m}:${s}.${ms}`;
+            }, 10);
+        }
+
+        document.getElementById('scramble-btn').onclick = async () => {
+            if (isRotating) return;
+            clearInterval(timerInterval);
+            timerRunning = false;
+            document.getElementById('timer').innerText = "00:00.00";
+            const axes = ['x', 'y', 'z'], layers = [-1, 0, 1];
+            for (let i = 0; i < 15; i++) {
+                await rotateLayer(axes[Math.floor(Math.random()*3)], layers[Math.floor(Math.random()*3)], (Math.random()>0.5?1:-1)*Math.PI/2);
+            }
+            startTimer();
+        };
+
+        document.getElementById('reset-btn').onclick = () => {
+            clearInterval(timerInterval);
+            timerRunning = false;
+            document.getElementById('timer').innerText = "00:00.00";
+            createCube();
+        };
+
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        init();
+    </script>
+</body>
+</html>
