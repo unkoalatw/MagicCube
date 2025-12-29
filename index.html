@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D 魔術方塊 - 直覺拖拽版 (修正方向)</title>
+    <title>3D魔術方塊</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -13,7 +13,7 @@
         .ui-panel * { pointer-events: auto; }
         .glass-card { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 1.5rem; }
         .btn { transition: all 0.2s; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: #7dd3fc; padding: 0.75rem 1.5rem; border-radius: 1rem; font-weight: 700; }
-        .btn:hover { background: rgba(56, 189, 248, 0.25); transform: translateY(-2px); border-color: #38bdf8; box-shadow: 0 0 15px rgba(56, 189, 248, 0.3); }
+        .btn:hover { background: rgba(56, 189, 248, 0.25); transform: translateY(-2px); border-color: #38bdf8; box-shadow: 0 0 20px rgba(56, 189, 248, 0.4); }
         * { user-select: none; -webkit-tap-highlight-color: transparent; }
     </style>
 </head>
@@ -26,12 +26,12 @@
             <div class="space-y-1">
                 <h1 class="text-3xl font-black tracking-tighter text-white uppercase italic">Cube <span class="text-sky-500">Sense</span></h1>
                 <div class="bg-sky-500/10 border border-sky-500/20 px-3 py-1 rounded-full text-[10px] text-sky-400 font-bold uppercase tracking-widest inline-block">
-                    手感修正版 v3.1
+                    穩定校準版 v3.4
                 </div>
             </div>
             <div class="text-right">
-                <div id="timer" class="text-4xl font-mono font-bold text-white tracking-tight">00:00.00</div>
-                <div id="status" class="text-xs text-slate-400 mt-1 font-medium">拖拽方塊層即可轉動</div>
+                <div id="timer" class="text-4xl font-mono font-bold text-white tracking-tight text-shadow-lg">00:00.00</div>
+                <div id="status" class="text-xs text-sky-300 mt-1 font-bold">層級自動對齊已啟用</div>
             </div>
         </div>
 
@@ -45,8 +45,8 @@
 
     <script>
         /**
-         * 3D 魔術方塊 - 方向修正版
-         * 修正了滑動方向與轉動方向的映射
+         * 3D 魔術方塊 - 穩定校準版
+         * 修復了長期旋轉後座標漂移導致的色層錯位問題
          */
         let scene, camera, renderer, raycaster, mouse = new THREE.Vector2();
         let cubes = [];
@@ -55,14 +55,13 @@
         let dragStartPoint = new THREE.Vector2();
         let selectedData = null;
         
-        // 視角控制
         let lon = 45, lat = 30;
         let phi = 0, theta = 0;
-        let target = new THREE.Vector3(0, 0, 0);
+        const target = new THREE.Vector3(0, 0, 0);
 
         const COLORS = {
             top: 0xffffff, bottom: 0xffd700, left: 0xff8c00,
-            right: 0xdc2626, front: 0x16a34a, back: 0x2563eb, inner: 0x111827
+            right: 0xdc2626, front: 0x16a34a, back: 0x2563eb, inner: 0x0f172a
         };
 
         function init() {
@@ -79,7 +78,7 @@
             raycaster = new THREE.Raycaster();
 
             scene.add(new THREE.AmbientLight(0xffffff, 1.0));
-            const sun = new THREE.DirectionalLight(0xffffff, 0.4);
+            const sun = new THREE.DirectionalLight(0xffffff, 0.5);
             sun.position.set(10, 20, 15);
             scene.add(sun);
 
@@ -112,6 +111,12 @@
                         const geo = new THREE.BoxGeometry(size, size, size);
                         const cube = new THREE.Mesh(geo, materials);
                         cube.position.set(x, y, z);
+                        
+                        // 加入黑色細邊線讓色層更明顯
+                        const edgesGeo = new THREE.EdgesGeometry(geo);
+                        const line = new THREE.LineSegments(edgesGeo, new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 }));
+                        cube.add(line);
+
                         scene.add(cube);
                         cubes.push(cube);
                     }
@@ -132,13 +137,10 @@
 
             if (intersects.length > 0) {
                 const hit = intersects[0];
-                const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
-                const worldNormal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
-                
                 selectedData = {
                     object: hit.object,
-                    normal: worldNormal,
-                    initialPos: hit.object.position.clone()
+                    point: hit.point.clone(),
+                    normal: hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)).normalize()
                 };
             } else {
                 selectedData = null;
@@ -150,16 +152,16 @@
 
             const moveX = event.clientX - dragStartPoint.x;
             const moveY = event.clientY - dragStartPoint.y;
-            const threshold = 10;
+            const distance = Math.sqrt(moveX * moveX + moveY * moveY);
 
             if (selectedData) {
-                if (Math.abs(moveX) > threshold || Math.abs(moveY) > threshold) {
-                    handleCubeDrag(moveX, moveY);
+                if (distance > 10) { 
+                    handleProjectedDrag(moveX, moveY);
                     isDragging = false; 
                 }
             } else {
-                lon -= moveX * 0.25;
-                lat += moveY * 0.25;
+                lon -= moveX * 0.3;
+                lat += moveY * 0.3;
                 lat = Math.max(-85, Math.min(85, lat));
                 dragStartPoint.set(event.clientX, event.clientY);
                 updateCameraPosition();
@@ -170,35 +172,45 @@
             isDragging = false;
         }
 
-        /**
-         * 修正後的拖拽映射邏輯
-         */
-        function handleCubeDrag(moveX, moveY) {
+        function handleProjectedDrag(moveX, moveY) {
             if (isRotating || !selectedData) return;
 
-            const n = selectedData.normal;
-            const pos = selectedData.initialPos;
-            let axis, layer, angle;
+            const dragVec = new THREE.Vector2(moveX, -moveY).normalize();
+            const axes = [
+                { axis: 'x', world: new THREE.Vector3(1, 0, 0) },
+                { axis: 'y', world: new THREE.Vector3(0, 1, 0) },
+                { axis: 'z', world: new THREE.Vector3(0, 0, 1) }
+            ];
 
-            const isHorizontal = Math.abs(moveX) > Math.abs(moveY);
+            let bestMatch = null;
+            let maxDot = -Infinity;
 
-            // 核心修正：將 -1 和 1 的方向翻轉，以匹配直覺
-            if (Math.abs(n.y) > 0.5) { // 頂/底面
-                axis = isHorizontal ? 'y' : 'x';
-                layer = isHorizontal ? Math.round(pos.y) : Math.round(pos.x);
-                // 向右拉 moveX > 0，向上拉 moveY < 0
-                angle = isHorizontal ? (moveX > 0 ? 1 : -1) : (moveY > 0 ? 1 : -1);
-            } else if (Math.abs(n.x) > 0.5) { // 左/右面
-                axis = isHorizontal ? 'z' : 'y';
-                layer = isHorizontal ? Math.round(pos.z) : Math.round(pos.y);
-                angle = isHorizontal ? (moveX > 0 ? -1 : 1) : (moveY > 0 ? -1 : 1);
-            } else if (Math.abs(n.z) > 0.5) { // 前/後面
-                axis = isHorizontal ? 'y' : 'x';
-                layer = isHorizontal ? Math.round(pos.y) : Math.round(pos.x);
-                angle = isHorizontal ? (moveX > 0 ? 1 : -1) : (moveY > 0 ? 1 : -1);
+            axes.forEach(a => {
+                const tangent = new THREE.Vector3().crossVectors(a.world, selectedData.point).normalize();
+                
+                const p1 = selectedData.point.clone();
+                const p2 = selectedData.point.clone().add(tangent.multiplyScalar(0.1));
+                
+                p1.project(camera);
+                p2.project(camera);
+                
+                const screenVec = new THREE.Vector2(p2.x - p1.x, p2.y - p1.y).normalize();
+                const dot = Math.abs(dragVec.dot(screenVec));
+
+                if (dot > maxDot) {
+                    maxDot = dot;
+                    const direction = dragVec.dot(screenVec) > 0 ? 1 : -1;
+                    bestMatch = {
+                        axis: a.axis,
+                        layer: Math.round(selectedData.object.position[a.axis]),
+                        angle: direction * (Math.PI / 2)
+                    };
+                }
+            });
+
+            if (bestMatch) {
+                rotateLayer(bestMatch.axis, bestMatch.layer, bestMatch.angle);
             }
-
-            if (axis) rotateLayer(axis, layer, angle * Math.PI / 2);
         }
 
         async function rotateLayer(axis, layer, angle) {
@@ -209,12 +221,8 @@
             const pivot = new THREE.Group();
             scene.add(pivot);
 
-            const movingCubes = cubes.filter(c => {
-                const p = new THREE.Vector3();
-                c.getWorldPosition(p);
-                return Math.abs(p[axis] - layer) < 0.1;
-            });
-
+            // 嚴格過濾該層方塊
+            const movingCubes = cubes.filter(c => Math.abs(c.position[axis] - layer) < 0.2);
             movingCubes.forEach(c => pivot.attach(c));
 
             const duration = 250;
@@ -228,7 +236,16 @@
                     if (progress < 1) requestAnimationFrame(step);
                     else {
                         pivot.updateMatrixWorld();
-                        movingCubes.forEach(c => scene.attach(c));
+                        movingCubes.forEach(c => {
+                            scene.attach(c);
+                            // --- 關鍵修復：強制座標與旋轉校準 ---
+                            c.position.x = Math.round(c.position.x);
+                            c.position.y = Math.round(c.position.y);
+                            c.position.z = Math.round(c.position.z);
+                            c.rotation.x = Math.round(c.rotation.x / (Math.PI/2)) * (Math.PI/2);
+                            c.rotation.y = Math.round(c.rotation.y / (Math.PI/2)) * (Math.PI/2);
+                            c.rotation.z = Math.round(c.rotation.z / (Math.PI/2)) * (Math.PI/2);
+                        });
                         scene.remove(pivot);
                         isRotating = false;
                         resolve();
@@ -241,9 +258,11 @@
         function updateCameraPosition() {
             phi = THREE.MathUtils.degToRad(90 - lat);
             theta = THREE.MathUtils.degToRad(lon);
-            camera.position.x = 10 * Math.sin(phi) * Math.cos(theta);
-            camera.position.y = 10 * Math.cos(phi);
-            camera.position.z = 10 * Math.sin(phi) * Math.sin(theta);
+            camera.position.set(
+                10 * Math.sin(phi) * Math.cos(theta),
+                10 * Math.cos(phi),
+                10 * Math.sin(phi) * Math.sin(theta)
+            );
             camera.lookAt(target);
         }
 
